@@ -684,7 +684,7 @@ def render_echarts_html_60(df, height=950):
     options = {
         "backgroundColor": "#131722",
         "animation": False,
-        "tooltip": {"trigger": "axis", "axisPointer": {"type": "cross"}},
+        "tooltip": {"show": False},  # 已關閉手機觸控浮窗
         "grid": [
             {"left": "4%", "right": "3%", "top": "2%", "height": "36%"},
             {"left": "4%", "right": "3%", "top": "40%", "height": "11%"},
@@ -1138,7 +1138,7 @@ def render_echarts_html(df, height=950):
     options = {
         "backgroundColor": "#131722",
         "animation": False,
-        "tooltip": {"trigger": "axis", "axisPointer": {"type": "cross"}},
+        "tooltip": {"show": False},  # 已關閉手機觸控浮窗
         "grid": [
             {"left": "4%", "right": "3%", "top": "2%", "height": "36%"},
             {"left": "4%", "right": "3%", "top": "40%", "height": "11%"},
