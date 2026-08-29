@@ -1603,16 +1603,16 @@ if input_code:
         )
 
     html_table = f"""
-    <div class="stock-info-card" style="padding: 10px 4px; overflow-x: hidden;">
+    <div class="stock-info-card" style="padding: 8px 3px; overflow-x: hidden;">
         <div class="metric-title" style="margin-bottom: 8px;">📊 近 7 日三大法人買賣超 (張)</div>
-        <table style="width: 100%; table-layout: fixed; font-size: 11px; border-collapse: collapse; font-family: monospace;">
+        <table style="width: 100%; font-size: 11px; border-collapse: collapse; font-family: monospace;">
             <thead>
                 <tr style="border-bottom: 1px solid #444444; color: #888888; text-align: right;">
-                    <th style="text-align: left; width: 18%; padding: 4px 1px;">日期</th>
-                    <th style="width: 20.5%; padding: 4px 1px;">外資</th>
-                    <th style="width: 20.5%; padding: 4px 1px;">投信</th>
-                    <th style="width: 20.5%; padding: 4px 1px;">自營</th>
-                    <th style="width: 20.5%; padding: 4px 1px;">合計</th>
+                    <th style="text-align: left; padding: 4px 0px; white-space: nowrap;">日期</th>
+                    <th style="padding: 4px 0px; white-space: nowrap;">外資</th>
+                    <th style="padding: 4px 0px; white-space: nowrap;">投信</th>
+                    <th style="padding: 4px 0px; white-space: nowrap;">自營</th>
+                    <th style="padding: 4px 0px; white-space: nowrap;">合計</th>
                 </tr>
             </thead>
             <tbody>
