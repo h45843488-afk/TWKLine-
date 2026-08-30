@@ -192,10 +192,10 @@ def fetch_institutional_data(stock_code):
 
 
 # ---------------------------------------------------------
-# 日 K 即時資料合併核心 Logic (修復盤中日 K 即時更新)
+# 日 K 即時資料合併核心 Logic (修復盤中日 K 即時更新對準問題)
 # ---------------------------------------------------------
 def merge_realtime_to_daily(df_daily, realtime_data):
-    if df_daily.empty or not realtime_data:
+    if df_daily.empty or not realtime_data or not isinstance(realtime_data, dict):
         return df_daily
 
     df_res = df_daily.copy()
@@ -270,8 +270,10 @@ def ema_func(series, period):
 
 
 def calculate_custom_indicators(df):
-    if df.empty or len(df) < 20:
+    if df.empty or len(df) < 5:
         return df
+
+    df = df.copy()
 
     # === 吸拉派落計算 ===
     close = df["Close"]
@@ -298,9 +300,9 @@ def calculate_custom_indicators(df):
 
     # === 基礎均線與 MACD ===
     df["工作線"] = df["Close"].ewm(span=5, adjust=False).mean()
-    df["MA10"] = df["Close"].rolling(10).mean()
-    df["MA20"] = df["Close"].rolling(20).mean()
-    df["MA60"] = df["Close"].rolling(60).mean()
+    df["MA10"] = df["Close"].rolling(10, min_periods=1).mean()
+    df["MA20"] = df["Close"].rolling(20, min_periods=1).mean()
+    df["MA60"] = df["Close"].rolling(60, min_periods=1).mean()
 
     # 通達信: 買入:=CROSS(工作線,生命線);
     df["CROSS_GOLDEN"] = (df["工作線"] > df["MA20"]) & (
@@ -318,17 +320,17 @@ def calculate_custom_indicators(df):
     zyg_sma1 = zyg28.ewm(alpha=1 / 2, adjust=False).mean()
     zyg_sma2 = zyg_sma1.ewm(alpha=1 / 2, adjust=False).mean()
     df["ZYG29"] = zyg_sma2.ewm(alpha=1 / 2, adjust=False).mean()
-    df["ZYG30"] = df["ZYG29"].rolling(window=3).mean()
+    df["ZYG30"] = df["ZYG29"].rolling(window=3, min_periods=1).mean()
     df["ZYG_Red"] = np.where(df["ZYG29"] > df["ZYG30"], df["ZYG29"], None)
     df["ZYG_Green"] = np.where(df["ZYG29"] <= df["ZYG30"], df["ZYG29"], None)
 
     df["ZYG_CROSS_BUY"] = (df["ZYG29"] > df["ZYG30"]) & (
         df["ZYG29"].shift(1) <= df["ZYG30"].shift(1)
     )
-    vol_ma5 = df["Volume"].rolling(window=5).mean()
+    vol_ma5 = df["Volume"].rolling(window=5, min_periods=1).mean()
     df["V_UP"] = df["Volume"] > (vol_ma5 * 1.3)
     df["TREND_OK"] = df["Close"] > df["MA20"]
-    df["REF_HHV10"] = df["High"].shift(1).rolling(window=10).max()
+    df["REF_HHV10"] = df["High"].shift(1).rolling(window=10, min_periods=1).max()
     df["BREAK_BOX"] = df["Close"] > df["REF_HHV10"]
 
     df["HIGH_WIN_BUY"] = (
@@ -350,9 +352,9 @@ def calculate_custom_indicators(df):
             df.iat[i, df.columns.get_loc("Signal_Color")] = "#FFD700"
 
     # === 量能主力線 ===
-    df["主力啟動線"] = df["Volume"].rolling(5).mean()
-    df["主力洗盤線"] = df["Volume"].rolling(35).mean()
-    df["資金異動線"] = df["Volume"].rolling(120).mean()
+    df["主力啟動線"] = df["Volume"].rolling(5, min_periods=1).mean()
+    df["主力洗盤線"] = df["Volume"].rolling(35, min_periods=1).mean()
+    df["資金異動線"] = df["Volume"].rolling(120, min_periods=1).mean()
 
     cross_start_fund = (df["主力啟動線"] > df["資金異動線"]) & (
         df["主力啟動線"].shift(1) <= df["資金異動線"].shift(1)
@@ -684,7 +686,7 @@ def render_echarts_html_60(df, height=950):
     options = {
         "backgroundColor": "#131722",
         "animation": False,
-        "tooltip": {"show": False},  # 已關閉手機觸控浮窗
+        "tooltip": {"show": False},
         "grid": [
             {"left": "4%", "right": "3%", "top": "2%", "height": "36%"},
             {"left": "4%", "right": "3%", "top": "40%", "height": "11%"},
@@ -1138,7 +1140,7 @@ def render_echarts_html(df, height=950):
     options = {
         "backgroundColor": "#131722",
         "animation": False,
-        "tooltip": {"show": False},  # 已關閉手機觸控浮窗
+        "tooltip": {"show": False},
         "grid": [
             {"left": "4%", "right": "3%", "top": "2%", "height": "36%"},
             {"left": "4%", "right": "3%", "top": "40%", "height": "11%"},
@@ -1448,16 +1450,14 @@ def render_echarts_html(df, height=950):
 
 
 # ---------------------------------------------------------
-# 5. 主畫面與側邊欄數據綁定 (日 K 即時動態寫回機制)
+# 5. 主畫面與側邊欄數據綁定 (日 K 即時動態寫回機制修復)
 # ---------------------------------------------------------
-# 直接呼叫，不要包在 with st.form 裡面
 stock_code, submit_button = ma.render_search_bar(
     default_code="2330", key_prefix="top"
 )
 
 input_code = stock_code.strip()
 
-# 側邊欄保留 K 線週期切換選項
 kline_type = st.sidebar.radio(
     "K線週期", ["日K", "60分K"], horizontal=True, key="kline_type"
 )
@@ -1472,7 +1472,9 @@ if input_code:
             .drop_duplicates("DateStr", keep="last")
             .reset_index(drop=True)
         )
+        # 進行即時行情動態合併
         df = merge_realtime_to_daily(df, realtime)
+        # 關鍵修復：必須在合併完最新成交價後，再次 recalculate 所有指標與均線！
         df = calculate_custom_indicators(df)
 
     df_60 = fetch_60min_kline(clean_code)
@@ -1487,7 +1489,7 @@ if input_code:
     if isinstance(realtime, dict) and "price" in realtime:
         price = realtime.get("price", 0)
         prev_close = realtime.get("prev_close", 0)
-        change = price - prev_close
+        change = price - prev_close if prev_close else 0
         pct_change = (change / prev_close * 100) if prev_close else 0
 
         if change > 0:
@@ -1548,7 +1550,7 @@ if input_code:
     # ---------------------------------------------------------
     # 戰情多空共振燈號：5 分制多空對齊判定邏輯
     # ---------------------------------------------------------
-    if not df.empty and len(df) >= 20:
+    if not df.empty and len(df) >= 5:
         latest = df.iloc[-1]
 
         # === 多方 5 大條件判定 ===
@@ -1623,11 +1625,17 @@ if input_code:
     """
     st.sidebar.markdown(html_table, unsafe_allow_html=True)
 
-    if not df.empty and len(df) >= 20:
+    if not df.empty and len(df) >= 5:
         latest = df.iloc[-1]
-        prev_close = df.iloc[-2]["Close"] if len(df) > 1 else latest["Close"]
+        
+        # 優先拿即時數據的 prev_close 做精準比對
+        if isinstance(realtime, dict) and realtime.get("prev_close"):
+            prev_close = float(realtime["prev_close"])
+        else:
+            prev_close = df.iloc[-2]["Close"] if len(df) > 1 else latest["Close"]
+            
         change = latest["Close"] - prev_close
-        pct_change = (change / prev_close) * 100
+        pct_change = (change / prev_close) * 100 if prev_close else 0.0
 
         # ---------- 首頁雙層抬頭（手機雙排 / 桌機單排自適應） ----------
         metrics_dict = {
@@ -1717,4 +1725,4 @@ if input_code:
                 components.html(html_60, height=960)
 
     else:
-        st.error("查無數據或數據不足（少於 20 天），請重新確認股票代號。")
+        st.error("查無數據或數據不足，請重新確認股票代號。")
