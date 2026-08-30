@@ -9,14 +9,14 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from data_fetcher import fetch_60min_kline, get_realtime_dde
-import mobile_adapter as ma  # 導入整個 mobile_adapter
+import mobile_adapter as ma
 from risk_card import render_risk_card
 
 
 def render_html_iframe(
     html_code: str, height: int = 600, scrolling: bool = False
 ):
-    """將 HTML 字串轉為 base64 URI 並透過 st.iframe 渲染，避免 DeprecationWarning"""
+    """將 HTML 字串轉為 base64 URI 並透過 st.iframe 渲染"""
     b64_html = base64.b64encode(html_code.encode("utf-8")).decode("utf-8")
     data_url = f"data:text/html;charset=utf-8;base64,{b64_html}"
     st.iframe(src=data_url, height=height, scrolling=scrolling)
@@ -70,12 +70,14 @@ def get_stock_name(stock_code):
 
 @st.cache_data(ttl=3600)
 def fetch_stock_meta_and_kline(stock_code):
+    """抓取歷史日 K 數據，天數拉長至 4 年以利週 K 與月 K 計算長均線"""
     clean_code = str(stock_code).strip().replace(".TW", "").replace(".TWO", "")
     stock_name = get_stock_name(clean_code)
 
     end_date = datetime.date.today().strftime("%Y-%m-%d")
+    # 將天數由 365 改為 1460 (4 年)，確保週/月 K 有足夠根數計算 MA60/MA120
     start_date = (
-        datetime.date.today() - datetime.timedelta(days=365)
+        datetime.date.today() - datetime.timedelta(days=365 * 4)
     ).strftime("%Y-%m-%d")
 
     url = "https://api.finmindtrade.com/api/v4/data"
@@ -192,7 +194,7 @@ def fetch_institutional_data(stock_code):
 
 
 # ---------------------------------------------------------
-# 日 K 即時資料合併核心 Logic (修復盤中日 K 即時更新對準問題)
+# 日 K 即時資料合併與週/月 K 轉換函數
 # ---------------------------------------------------------
 def merge_realtime_to_daily(df_daily, realtime_data):
     if df_daily.empty or not realtime_data or not isinstance(realtime_data, dict):
@@ -258,8 +260,41 @@ def merge_realtime_to_daily(df_daily, realtime_data):
         }
         df_res = pd.concat([df_res, pd.DataFrame([new_row])], ignore_index=True)
 
-    print(f"[日 K 即時動態合併成功] 最新成交價={price}, 張數={volume}")
     return df_res
+
+
+def resample_kline(df_daily, timeframe="W"):
+    """
+    【全新新增】將日 K 資料重採樣為週 K (W-FRI) 或月 K (ME)
+    - timeframe: 'W' (週) 或 'M' (月)
+    """
+    if df_daily.empty:
+        return df_daily
+
+    df = df_daily.copy()
+    df["Date"] = pd.to_datetime(df["DateStr"])
+    df.set_index("Date", inplace=True)
+
+    # 週 K 以每週五為基準，月 K 以月底為基準
+    rule = "W-FRI" if timeframe == "W" else "ME"
+
+    resampled = (
+        df.resample(rule)
+        .agg(
+            {
+                "Open": "first",
+                "High": "max",
+                "Low": "min",
+                "Close": "last",
+                "Volume": "sum",
+            }
+        )
+        .dropna(subset=["Close"])
+        .reset_index()
+    )
+
+    resampled["DateStr"] = resampled["Date"].dt.strftime("%Y-%m-%d")
+    return resampled.drop(columns=["Date"])
 
 
 # ---------------------------------------------------------
@@ -562,7 +597,7 @@ def render_echarts_html_60(df, height=950):
         for x in df["MACD_Hist_60"]
     ]
 
-    # 8. 基礎數據轉換 (含金叉白柱渲染)
+    # 8. 基礎數據轉換
     dates = df["DateStr"].astype(str).tolist()
 
     k_values = []
@@ -662,7 +697,6 @@ def render_echarts_html_60(df, height=950):
         volume_data.append({"value": vol_val, "itemStyle": {"color": color}})
         vol_white_line_data.append(vol_val if row["VOL_OK_60"] else None)
 
-    # 莊家抬轎 Series 資料
     zhuang_data_60 = []
     kaishi_line_data_60 = []
     for idx, row in df.iterrows():
@@ -682,7 +716,6 @@ def render_echarts_html_60(df, height=950):
     total_len = len(dates)
     start_percent = int((1 - 70 / total_len) * 100) if total_len > 70 else 0
 
-    # 9. ECharts 5-Grid 配置
     options = {
         "backgroundColor": "#131722",
         "animation": False,
@@ -1016,7 +1049,7 @@ def render_echarts_html_60(df, height=950):
 
 
 # ---------------------------------------------------------
-# 4B. ECharts 日 K 渲染器
+# 4B. ECharts 日/週/月 K 通用渲染器
 # ---------------------------------------------------------
 def render_echarts_html(df, height=950):
     dates = df["DateStr"].tolist()
@@ -1221,7 +1254,7 @@ def render_echarts_html(df, height=950):
                 },
             },
             {
-                "name": "日K",
+                "name": "K線",
                 "type": "candlestick",
                 "data": k_values,
                 "xAxisIndex": 0,
@@ -1450,7 +1483,7 @@ def render_echarts_html(df, height=950):
 
 
 # ---------------------------------------------------------
-# 5. 主畫面與側邊欄數據綁定 (日 K 即時動態寫回機制修復)
+# 5. 主畫面與側邊欄數據綁定
 # ---------------------------------------------------------
 stock_code, submit_button = ma.render_search_bar(
     default_code="2330", key_prefix="top"
@@ -1458,24 +1491,33 @@ stock_code, submit_button = ma.render_search_bar(
 
 input_code = stock_code.strip()
 
+# 擴充 K 線週期單選選單
 kline_type = st.sidebar.radio(
-    "K線週期", ["日K", "60分K"], horizontal=True, key="kline_type"
+    "K線週期", ["日K", "週K", "月K", "60分K"], horizontal=True, key="kline_type"
 )
 
 if input_code:
-    stock_name, clean_code, df = fetch_stock_meta_and_kline(input_code)
+    stock_name, clean_code, df_daily_raw = fetch_stock_meta_and_kline(input_code)
     realtime = get_realtime_dde(clean_code)
 
-    if not df.empty:
-        df = (
-            df.sort_values("DateStr")
+    # 先進行即時資料與日 K 合併
+    if not df_daily_raw.empty:
+        df_daily_raw = (
+            df_daily_raw.sort_values("DateStr")
             .drop_duplicates("DateStr", keep="last")
             .reset_index(drop=True)
         )
-        # 進行即時行情動態合併
-        df = merge_realtime_to_daily(df, realtime)
-        # 關鍵修復：必須在合併完最新成交價後，再次 recalculate 所有指標與均線！
-        df = calculate_custom_indicators(df)
+        df_daily_raw = merge_realtime_to_daily(df_daily_raw, realtime)
+
+    # 依據選擇的週期進行資料轉換與指標計算
+    if kline_type == "日K":
+        df = calculate_custom_indicators(df_daily_raw)
+    elif kline_type == "週K":
+        df_week = resample_kline(df_daily_raw, timeframe="W")
+        df = calculate_custom_indicators(df_week)
+    elif kline_type == "月K":
+        df_month = resample_kline(df_daily_raw, timeframe="M")
+        df = calculate_custom_indicators(df_month)
 
     df_60 = fetch_60min_kline(clean_code)
     if not df_60.empty:
@@ -1548,12 +1590,11 @@ if input_code:
         table_rows += "</tr>"
 
     # ---------------------------------------------------------
-    # 戰情多空共振燈號：5 分制多空對齊判定邏輯
+    # 戰情多空共振燈號
     # ---------------------------------------------------------
-    if not df.empty and len(df) >= 5:
+    if kline_type in ["日K", "週K", "月K"] and not df.empty and len(df) >= 5:
         latest = df.iloc[-1]
 
-        # === 多方 5 大條件判定 ===
         bull_c1 = latest["Close"] > latest["工作線"]
         bull_c2 = (
             (latest["ZYG29"] > latest["ZYG30"])
@@ -1566,7 +1607,6 @@ if input_code:
 
         bull_score = sum([bull_c1, bull_c2, bull_c3, bull_c4, bull_c5])
 
-        # === 空方 5 大條件判定 ===
         bear_c1 = latest["Close"] < latest["MA10"]
         bear_c2 = (latest["ZYG29"] <= latest["ZYG30"]) or latest.get(
             "SELL_ALL", False
@@ -1577,7 +1617,6 @@ if input_code:
 
         bear_score = sum([bear_c1, bear_c2, bear_c3, bear_c4, bear_c5])
 
-        # === 燈號等級歸類與 HTML 呈現 ===
         if bull_score == 5:
             light_html = "<span style='color: #FF3333; font-size: 15px;'>🔴 <b>【紅燈：準備數錢 / 買進】</b><br><span style='font-size: 11px; color: #CCCCCC;'>多方條件全面到齊 (5/5)，強烈共振！</span></span>"
             box_border = "#FF3333"
@@ -1597,7 +1636,7 @@ if input_code:
         st.sidebar.markdown(
             f"""
                 <div class="stock-info-card" style="border: 2px solid {box_border}; text-align: center; padding: 10px; margin-bottom: 10px;">
-                    <div class="metric-title" style="margin-bottom: 5px;">🚦 戰情多空共振燈號</div>
+                    <div class="metric-title" style="margin-bottom: 5px;">🚦 戰情多空共振燈號 ({kline_type})</div>
                     <div style="padding: 4px 0;">{light_html}</div>
                 </div>
             """,
@@ -1625,19 +1664,18 @@ if input_code:
     """
     st.sidebar.markdown(html_table, unsafe_allow_html=True)
 
-    if not df.empty and len(df) >= 5:
+    if kline_type in ["日K", "週K", "月K"] and not df.empty and len(df) >= 5:
         latest = df.iloc[-1]
-        
-        # 優先拿即時數據的 prev_close 做精準比對
+
         if isinstance(realtime, dict) and realtime.get("prev_close"):
             prev_close = float(realtime["prev_close"])
         else:
             prev_close = df.iloc[-2]["Close"] if len(df) > 1 else latest["Close"]
-            
+
         change = latest["Close"] - prev_close
         pct_change = (change / prev_close) * 100 if prev_close else 0.0
 
-        # ---------- 首頁雙層抬頭（手機雙排 / 桌機單排自適應） ----------
+        # 首頁雙層抬頭
         metrics_dict = {
             "EMA5": f"{latest['工作線']:.2f}",
             "MA10": f"{latest['MA10']:.2f}",
@@ -1654,12 +1692,11 @@ if input_code:
             change=change,
             pct_change=pct_change,
             metrics_dict=metrics_dict,
-            is_mobile=True,  # 啟用手機雙排修護卡片
+            is_mobile=True,
         )
         st.markdown(header_html, unsafe_allow_html=True)
-        # -------------------------------------------------------------------
 
-        # ── 置頂卡片：🛡️ 實戰風控與關鍵關卡 ──
+        # 🛡️ 實戰風控卡片
         render_risk_card(df)
 
         # --- 莊家控盤狀態 ---
@@ -1679,7 +1716,7 @@ if input_code:
         st.sidebar.markdown(
             f"""
                 <div class="stock-info-card">
-                    <div class="metric-title">🎯 莊家抬轎指標</div>
+                    <div class="metric-title">🎯 莊家抬轎指標 ({kline_type})</div>
                     <div class="metric-row"><span class="metric-label">控盤值:</span><span class="metric-value">{latest['控盤']:.2f}</span></div>
                     <div class="metric-row"><span class="metric-label">當前狀態:</span><span class="metric-value" style="color:{zhuang_color};">{zhuang_status}</span></div>
                 </div>
@@ -1704,7 +1741,7 @@ if input_code:
         st.sidebar.markdown(
             f"""
                 <div class="stock-info-card">
-                    <div class="metric-title">🔥 量能主力訊號</div>
+                    <div class="metric-title">🔥 量能主力訊號 ({kline_type})</div>
                     <div class="metric-row"><span class="metric-label">主力啟動線(5):</span><span class="metric-value">{int(latest['主力啟動線']):,}</span></div>
                     <div class="metric-row"><span class="metric-label">主力洗盤線(35):</span><span class="metric-value">{int(latest['主力洗盤線']):,}</span></div>
                     <div class="metric-row"><span class="metric-label">資金異動線(120):</span><span class="metric-value">{int(latest['資金異動線']):,}</span></div>
@@ -1714,15 +1751,15 @@ if input_code:
             unsafe_allow_html=True,
         )
 
-        # K線圖表渲染
-        if kline_type == "日K":
-            render_echarts_html(df, height=950)
+        # K線圖表渲染 (日/週/月通用)
+        render_echarts_html(df, height=950)
+
+    elif kline_type == "60分K":
+        if df_60.empty:
+            st.error(f"{clean_code} 暫時無法取得 60分鐘K資料")
         else:
-            if df_60.empty:
-                st.error(f"{clean_code} 暫時無法取得 60分鐘K資料")
-            else:
-                html_60 = render_echarts_html_60(df_60, height=950)
-                components.html(html_60, height=960)
+            html_60 = render_echarts_html_60(df_60, height=950)
+            components.html(html_60, height=960)
 
     else:
         st.error("查無數據或數據不足，請重新確認股票代號。")
