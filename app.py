@@ -226,10 +226,13 @@ def fetch_stock_meta_and_kline(input_code):
 @st.cache_data(ttl=300)
 def fetch_institutional_data(stock_code):
     clean_code = str(stock_code).strip().replace(".TW", "").replace(".TWO", "")
+
     start_date = (
         datetime.date.today() - datetime.timedelta(days=15)
     ).strftime("%Y-%m-%d")
+
     url = "https://api.finmindtrade.com/api/v4/data"
+
     params = {
         "dataset": "TaiwanStockInstitutionalInvestorsBuySell",
         "data_id": clean_code,
@@ -238,18 +241,37 @@ def fetch_institutional_data(stock_code):
 
     try:
         time.sleep(0.1)
-        res = requests.get(url, params=params, timeout=8)
+
+        res = requests.get(
+            url,
+            params=params,
+            timeout=8
+        )
+
         data = res.json()
 
+        # -----------------------------------------------------
+        # 沒有資料
+        # -----------------------------------------------------
         if data.get("msg") != "success" or not data.get("data"):
             return pd.DataFrame(
-                [["無資料", "0", "0", "0", "0"]],
-                columns=["日期", "外資", "投信", "自營", "合計"],
+                [["無資料", 0, 0, 0, 0]],
+                columns=["日期", "外資", "投信", "自營", "合計"]
             )
 
+        # -----------------------------------------------------
+        # 原始資料
+        # -----------------------------------------------------
         df_raw = pd.DataFrame(data["data"])
-        df_raw["buy_sell_sheet"] = (df_raw["buy"] - df_raw["sell"]) / 1000
 
+        # 買賣超：張
+        df_raw["buy_sell_sheet"] = (
+            df_raw["buy"] - df_raw["sell"]
+        ) / 1000
+
+        # -----------------------------------------------------
+        # 法人分類
+        # -----------------------------------------------------
         def categorize(name):
             if "Foreign" in name:
                 return "外資"
@@ -261,50 +283,79 @@ def fetch_institutional_data(stock_code):
 
         df_raw["法人類別"] = df_raw["name"].apply(categorize)
 
+        # -----------------------------------------------------
+        # 轉成每日三大法人
+        # -----------------------------------------------------
         df_pivot = df_raw.pivot_table(
             index="date",
             columns="法人類別",
             values="buy_sell_sheet",
-            aggfunc="sum",
+            aggfunc="sum"
         ).fillna(0)
 
+        # -----------------------------------------------------
+        # 確保三大法人欄位一定存在
+        # -----------------------------------------------------
         for col in ["外資", "投信", "自營"]:
             if col not in df_pivot.columns:
                 df_pivot[col] = 0
 
+        # -----------------------------------------------------
+        # 四捨五入成整數
+        # -----------------------------------------------------
         for col in ["外資", "投信", "自營"]:
-            df_pivot[col] = np.round(df_pivot[col]).astype(int)
+            df_pivot[col] = (
+                np.round(df_pivot[col])
+                .astype(int)
+            )
 
+        # -----------------------------------------------------
+        # 三大法人合計
+        # -----------------------------------------------------
         df_pivot["合計"] = (
-            df_pivot["外資"] + df_pivot["投信"] + df_pivot["自營"]
-        )
-
-        df_result = df_pivot.tail(7).iloc[::-1].reset_index()
-        df_result.rename(columns={"date": "日期"}, inplace=True)
-        df_result["日期"] = pd.to_datetime(df_result["日期"]).dt.strftime(
-            "%m/%d"
+            df_pivot["外資"]
+            + df_pivot["投信"]
+            + df_pivot["自營"]
         )
 
         # -----------------------------------------------------
-        # 關鍵修改：格式化數字帶正負號 (+1885 / -322) 並帶入顏色 HTML
+        # 取最近 7 個交易日
         # -----------------------------------------------------
-        def fmt_val(val):
-            if val > 0:
-                return f"<span style='color:#ff4d4d;'>+{val}</span>"
-            elif val < 0:
-                return f"<span style='color:#00cc66;'>{val}</span>"
-            else:
-                return f"<span style='color:#888;'>0</span>"
+        df_result = (
+            df_pivot
+            .tail(7)
+            .iloc[::-1]
+            .reset_index()
+        )
 
-        for col in ["外資", "投信", "自營", "合計"]:
-            df_result[col] = df_result[col].apply(fmt_val)
+        # -----------------------------------------------------
+        # 日期格式
+        # -----------------------------------------------------
+        df_result.rename(
+            columns={"date": "日期"},
+            inplace=True
+        )
 
-        return df_result[["日期", "外資", "投信", "自營", "合計"]]
+        df_result["日期"] = (
+            pd.to_datetime(df_result["日期"])
+            .dt.strftime("%m/%d")
+        )
+
+        # -----------------------------------------------------
+        # 重要：
+        # 這裡不要再 fmt_val！
+        # 必須保留純數字，讓下面的 HTML 表格去處理顏色。
+        # -----------------------------------------------------
+
+        return df_result[
+            ["日期", "外資", "投信", "自營", "合計"]
+        ]
 
     except Exception as e:
+
         return pd.DataFrame(
-            [["網路異常", "0", "0", "0", "0"]],
-            columns=["日期", "外資", "投信", "自營", "合計"],
+            [["網路異常", 0, 0, 0, 0]],
+            columns=["日期", "外資", "投信", "自營", "合計"]
         )
 
 
@@ -1720,7 +1771,7 @@ if input_code:
             f"<td style='padding: 5px 1px; color: #CCCCCC;'>{row['日期']}</td>"
         )
 
-        for col in ["外資", "投信", "自營商", "合計"]:
+        for col in ["外資", "投信", "自營", "合計"]:
             val = row[col]
             if val > 0:
                 color = "#FF3333"
