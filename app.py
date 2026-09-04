@@ -144,6 +144,14 @@ st.markdown(
 # ---------------------------------------------------------
 # 2. 抓取股票數據與三大法人籌碼 (FinMind REST API)
 # ---------------------------------------------------------
+import datetime
+import time
+import numpy as np
+import pandas as pd
+import requests
+import streamlit as st
+
+
 @st.cache_data(ttl=3600)
 def get_stock_name(stock_code):
     clean_code = str(stock_code).strip().replace(".TW", "").replace(".TWO", "")
@@ -235,8 +243,8 @@ def fetch_institutional_data(stock_code):
 
         if data.get("msg") != "success" or not data.get("data"):
             return pd.DataFrame(
-                [["無資料", 0, 0, 0, 0]],
-                columns=["日期", "外資", "投信", "自營商", "合計"],
+                [["無資料", "0", "0", "0", "0"]],
+                columns=["日期", "外資", "投信", "自營", "合計"],
             )
 
         df_raw = pd.DataFrame(data["data"])
@@ -248,7 +256,7 @@ def fetch_institutional_data(stock_code):
             elif "Investment_Trust" in name:
                 return "投信"
             elif "Dealer" in name:
-                return "自營商"
+                return "自營"
             return "其他"
 
         df_raw["法人類別"] = df_raw["name"].apply(categorize)
@@ -260,15 +268,15 @@ def fetch_institutional_data(stock_code):
             aggfunc="sum",
         ).fillna(0)
 
-        for col in ["外資", "投信", "自營商"]:
+        for col in ["外資", "投信", "自營"]:
             if col not in df_pivot.columns:
                 df_pivot[col] = 0
 
-        for col in ["外資", "投信", "自營商"]:
+        for col in ["外資", "投信", "自營"]:
             df_pivot[col] = np.round(df_pivot[col]).astype(int)
 
         df_pivot["合計"] = (
-            df_pivot["外資"] + df_pivot["投信"] + df_pivot["自營商"]
+            df_pivot["外資"] + df_pivot["投信"] + df_pivot["自營"]
         )
 
         df_result = df_pivot.tail(7).iloc[::-1].reset_index()
@@ -277,12 +285,26 @@ def fetch_institutional_data(stock_code):
             "%m/%d"
         )
 
-        return df_result[["日期", "外資", "投信", "自營商", "合計"]]
+        # -----------------------------------------------------
+        # 關鍵修改：格式化數字帶正負號 (+1885 / -322) 並帶入顏色 HTML
+        # -----------------------------------------------------
+        def fmt_val(val):
+            if val > 0:
+                return f"<span style='color:#ff4d4d;'>+{val}</span>"
+            elif val < 0:
+                return f"<span style='color:#00cc66;'>{val}</span>"
+            else:
+                return f"<span style='color:#888;'>0</span>"
+
+        for col in ["外資", "投信", "自營", "合計"]:
+            df_result[col] = df_result[col].apply(fmt_val)
+
+        return df_result[["日期", "外資", "投信", "自營", "合計"]]
 
     except Exception as e:
         return pd.DataFrame(
-            [["網路異常", 0, 0, 0, 0]],
-            columns=["日期", "外資", "投信", "自營商", "合計"],
+            [["網路異常", "0", "0", "0", "0"]],
+            columns=["日期", "外資", "投信", "自營", "合計"],
         )
 
 
@@ -1695,7 +1717,7 @@ if input_code:
     for _, row in df_inst.iterrows():
         table_rows += "<tr style='border-bottom: 1px solid #2A2E39;'>"
         table_rows += (
-            f"<td style='padding: 6px 2px; color: #CCCCCC;'>{row['日期']}</td>"
+            f"<td style='padding: 5px 1px; color: #CCCCCC;'>{row['日期']}</td>"
         )
 
         for col in ["外資", "投信", "自營商", "合計"]:
@@ -1711,7 +1733,7 @@ if input_code:
                 val_str = "0"
 
             weight = "bold" if col == "合計" else "normal"
-            table_rows += f"<td style='padding: 6px 2px; text-align: right; color: {color}; font-weight: {weight};'>{val_str}</td>"
+            table_rows += f"<td style='padding: 5px 1px; text-align: right; color: {color}; font-weight: {weight};'>{val_str}</td>"
         table_rows += "</tr>"
 
     # ---------------------------------------------------------
@@ -1771,7 +1793,7 @@ if input_code:
     html_table = f"""
     <div class="stock-info-card" style="padding: 8px 3px; overflow-x: hidden;">
         <div class="metric-title" style="margin-bottom: 8px;">📊 近 7 日三大法人買賣超 (張)</div>
-        <table style="width: 100%; font-size: 11px; border-collapse: collapse; font-family: monospace;">
+        <table style="width: 100%; font-size: 10px; border-collapse: collapse; font-family: monospace;">
             <thead>
                 <tr style="border-bottom: 1px solid #444444; color: #888888; text-align: right;">
                     <th style="text-align: left; padding: 4px 0px; white-space: nowrap;">日期</th>
