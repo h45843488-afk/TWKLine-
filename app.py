@@ -30,13 +30,35 @@ def render_html_iframe(
 
 
 # ---------------------------------------------------------
-# 1. 頁面配置與樣式 (含手機規格 RWD RWD 與雙排/每行3個適配)
+# 1. 頁面配置與樣式 (含手機規格 RWD 與雙排/每行3個適配)
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="台股 K 線監控站",
+    page_title="📈 台股 K 線監控站",
+    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# 透過 CSS 控制標題字體大小
+st.markdown(
+    """
+    <style>
+    /* 縮小 st.title 的 H1 大標題字體 (可依需求調整 1.4rem ~ 1.8rem) */
+    h1 {
+        font-size: 1.4rem !important;
+        padding-top: 0rem !important;
+        padding-bottom: 0.5rem !important;
+    }
+    
+    /* 下方可繼續接你原本的手機 RWD 與雙排/每行3個適配 CSS */
+    
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# 顯示主標題
+st.title("📈 台股 K 線監控站")
 
 st.markdown(
     """
@@ -1575,8 +1597,6 @@ def render_echarts_html(df, height=1050, sub1_metric="資金爆發"):
 # ---------------------------------------------------------
 # 5. 主畫面與側邊欄數據綁定
 # ---------------------------------------------------------
-st.sidebar.title("📈 台股 K 線監控站")
-
 # 2. 將搜尋框與按鍵拉出來到首頁 (主畫面最上方)
 col_search, col_btn = st.columns([4, 1])
 with col_search:
