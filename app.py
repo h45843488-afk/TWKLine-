@@ -1844,7 +1844,7 @@ if input_code:
     html_table = f"""
     <div class="stock-info-card" style="padding: 8px 3px; overflow-x: hidden;">
         <div class="metric-title" style="margin-bottom: 8px;">📊 近 7 日三大法人買賣超 (張)</div>
-        <table style="width: 100%; font-size: 10px; border-collapse: collapse; font-family: monospace;">
+        <table style="width: 100%; font-size: 9px; border-collapse: collapse; font-family: monospace;">
             <thead>
                 <tr style="border-bottom: 1px solid #444444; color: #888888; text-align: right;">
                     <th style="text-align: left; padding: 4px 0px; white-space: nowrap;">日期</th>
